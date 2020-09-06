@@ -1,0 +1,8 @@
+cradle:
+    stack:
+      - path: "./src"
+        component: "tim:lib"
+      - path: "./convert"
+        component: "tim:exe:convert"
+      - path: "./app"
+        component: "tim:exe:tim"

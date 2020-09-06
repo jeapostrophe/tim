@@ -1,0 +1,9 @@
+resolver: lts-16.12
+
+allow-newer: true
+
+ghc-options:
+    "$everything": -haddock
+
+extra-deps:
+    - orgmode-0.1.0.1@sha256:d811e95330d0d46700a9bef471fa0383f38a5c61c751a360aa216150bb9ff485,1575
