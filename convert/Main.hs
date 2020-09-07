@@ -7,12 +7,13 @@ import qualified Data.Map.Strict as M
 import Data.OrgMode
 import qualified Data.Set as S
 import Data.Time.Clock
+import Data.Time.Clock.POSIX
 import Data.Time.Format
 import Data.Time.LocalTime
 import System.Environment
 import Text.Megaparsec
 import Text.Megaparsec.Char
-import Data.Word
+import Tim
 
 --- Parsing
 type Parser = Parsec () String
@@ -49,10 +50,10 @@ type App = ReaderT Env IO
 type Path = [String]
 
 data ClockEntry = ClockEntry Path UTCTime UTCTime
- deriving Eq
+  deriving (Eq)
 
 instance Ord ClockEntry where
-    (ClockEntry _ x _) <= (ClockEntry _ y _) = x <= y
+  (ClockEntry _ x _) <= (ClockEntry _ y _) = x <= y
 
 data Env = Env
   { ePath :: Path,
@@ -111,27 +112,25 @@ fmtDuration :: Integral a => UTCTime -> UTCTime -> a
 fmtDuration from to =
   round $ diffUTCTime to from
 
-writeEntry :: UTCTime -> M.Map Path Word16 -> ClockEntry -> IO ()
-writeEntry epoch p2idx (ClockEntry p from to) = do
-  putStrLn $ show (p2idx M.! p) <> " " <> (show (fmtDuration epoch from :: Word32)) <> " " <> (show (fmtDuration from to :: Word16))
-
-writePath :: Path -> Word16 -> IO ()
-writePath p idx = do
-  putStrLn $ show idx <> " -> " <> intercalate ":" p
+makeEntry :: UTCTime -> M.Map Path Topic -> ClockEntry -> Entry
+makeEntry epoch p2idx (ClockEntry p from to) = Entry start duration tag
+  where
+    start :: Start = fmtDuration epoch from
+    duration :: Duration = fmtDuration from to
+    tag :: Topic = p2idx M.! p
 
 main :: IO ()
 main = do
-  [f] <- getArgs
+  [f, dest] <- getArgs
   c <- readFile f
   let d = orgFile c
   env0 <- mkEnv0
   flip runReaderT env0 $ mapM_ ngo $ odNodes d
   let Env {..} = env0
   ePaths <- readIORef ePathsR
-  let pathsToIntL :: [(Path, Word16)] = zip (S.toAscList ePaths) [0 ..]
-  mapM_ (uncurry writePath) pathsToIntL
-  let pathsToIntM = M.fromList pathsToIntL
+  let ePathsL = S.toAscList ePaths
+  writeTopics dest $ map (intercalate ":") ePathsL
+  let pathsToIntM :: M.Map Path Topic = M.fromList $ zip ePathsL [0 ..]
   eEntries <- readIORef eEntriesR
   eEpoch <- readIORef eEpochR
-  putStrLn $ formatTime defaultTimeLocale rfc822DateFormat eEpoch
-  mapM_ (writeEntry eEpoch pathsToIntM) $ sort eEntries
+  writeLog dest $ Log (round (utcTimeToPOSIXSeconds eEpoch)) $ map(makeEntry eEpoch pathsToIntM) $ sort eEntries
