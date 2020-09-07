@@ -10,6 +10,7 @@ description:         Efficient command-line clocking
 dependencies:
 - base >= 4.7 && < 5
 - mtl
+- time
 
 default-extensions:
 - BangPatterns
@@ -75,5 +76,6 @@ executables:
     dependencies:
         - tim
         - orgmode
-        - attoparsec
+        - megaparsec
+        - containers
     
