@@ -109,12 +109,14 @@ ngo n = do
 
 makeEntry :: UTCTime -> M.Map Path Topic -> ClockEntry -> Entry
 makeEntry epoch p2idx (ClockEntry ln p from to) = 
-  mkEntry ln' epoch from to $ p2idx M.! p
-  where ln' = maybe "" ((" at line " ++) . show) ln
+  case mkEntry epoch from to $ p2idx M.! p of
+    Just x -> x
+    Nothing ->
+      error $ "could not make entry of " <> show (ln, from, to)
 
 main :: IO ()
 main = do
-  [f, dest] <- getArgs
+  [f] <- getArgs
   c <- readFile f
   let d = orgFile c
   env0 <- mkEnv0
@@ -122,8 +124,9 @@ main = do
   let Env {..} = env0
   ePaths <- readIORef ePathsR
   let ePathsL = S.toAscList ePaths
-  writeTopics dest $ map (intercalate ":") ePathsL
+  writeTopics timDir $ map (intercalate ":") ePathsL
   let pathsToIntM :: M.Map Path Topic = M.fromList $ zip ePathsL [0 ..]
   eEntries <- readIORef eEntriesR
   eEpoch <- readIORef eEpochR
-  writeLog dest $ Log (mkEpoch eEpoch) $ map (makeEntry eEpoch pathsToIntM) $ sort eEntries
+  let epoch = maybe (error $ "could convert " <> show eEpoch <> " to epoch") id (mkEpoch eEpoch)
+  writeLog timDir $ Log epoch $ map (makeEntry eEpoch pathsToIntM) $ sort eEntries

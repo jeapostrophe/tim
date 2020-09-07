@@ -8,6 +8,9 @@ module Tim
     writeLog,
     mkEpoch,
     mkEntry,
+    timDir,
+    getTopics,
+    foldEntries,
   )
 where
 
@@ -15,15 +18,19 @@ import Control.Monad
 import Data.Binary
 import Data.Binary.Get
 import Data.Binary.Put
----import Data.Bits
 import Data.List
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
----import Data.Time.Format
----import Data.Time.LocalTime
 import Data.Word ()
 import System.Directory
 import System.FilePath
+import qualified Data.Map.Strict as M
+--import qualified Data.ByteString as B
+import qualified Data.ByteString.Char8 as BC
+import Data.Char
+
+timDir :: FilePath
+timDir = ".tim"
 
 type Epoch = Word64
 
@@ -80,9 +87,9 @@ exactly def sz l = l''
 prepPath :: FilePath -> IO ()
 prepPath p = do
   createDirectoryIfMissing True $ takeDirectory p
-  fe <- doesFileExist p
+  fe <- doesPathExist p
   when fe $
-    removeFile p
+    error $ "tim: will not overwrite " <> p
 
 writeTopics :: FilePath -> Topics -> IO ()
 writeTopics p ts = do
@@ -97,26 +104,47 @@ writeLog p l = do
   prepPath p'
   encodeFile p' l
 
-safeRoundM :: forall a b. (RealFrac a, Integral b, Bounded b) => a -> Maybe b
-safeRoundM x =
+safeRound :: forall a b. (RealFrac a, Integral b, Bounded b) => a -> Maybe b
+safeRound x =
   case x < fromIntegral (minBound :: b) || x > fromIntegral (maxBound :: b) of
     True -> Nothing
     False -> Just $ round x
 
-safeRound :: forall a b. (Show a, RealFrac a, Integral b, Bounded b) => String -> a -> b
-safeRound lab x =
-  case safeRoundM x of
-    Nothing -> error $ "safeRound: cannot convert " <> show x <> " to " <> lab
-    Just y -> y
-
-mkEpoch :: UTCTime -> Epoch
+mkEpoch :: UTCTime -> Maybe Epoch
 mkEpoch t =
-  safeRound "epoch" (utcTimeToPOSIXSeconds t)
+  safeRound (utcTimeToPOSIXSeconds t)
 
-safeDuration :: (Integral a, Bounded a) => String -> UTCTime -> UTCTime -> a
-safeDuration lab from to =
-  safeRound lab $ diffUTCTime to from
+safeDuration :: (Integral a, Bounded a) => UTCTime -> UTCTime -> Maybe a
+safeDuration from to =
+  safeRound $ diffUTCTime to from
 
-mkEntry :: String -> UTCTime -> UTCTime -> UTCTime -> Topic -> Entry
-mkEntry lab epoch start end topic =
-  Entry (safeDuration ("start" <> lab) epoch start) (safeDuration ("duration" <> lab) start end) topic
+mkEntry :: UTCTime -> UTCTime -> UTCTime -> Topic -> Maybe Entry
+mkEntry epoch start end topic = do
+  start' <- safeDuration epoch start
+  dur <- safeDuration start end
+  return $ Entry start' dur topic
+
+splitEvery :: Int -> BC.ByteString -> [BC.ByteString]
+splitEvery len bs = 
+  case BC.null bs of
+    True -> []
+    False -> b : splitEvery len bs'
+      where (b, bs') = BC.splitAt len bs 
+
+trimTopic :: BC.ByteString -> BC.ByteString
+--- XXX I want to use dropWhileEnd isSpace
+trimTopic = BC.reverse . (BC.dropWhile isSpace) . BC.reverse
+
+getTopics :: FilePath -> (BC.ByteString -> Bool) -> IO (M.Map Topic String)
+getTopics p sel = do
+  let tp = topicsp p
+  bs <- BC.readFile tp
+  let tbs = map trimTopic $ splitEvery topic_len bs
+  let f m (tb, idx) = if sel tb then M.insert idx (BC.unpack tb) m else m
+  return $ foldl' f mempty $ zip tbs [0..]
+
+foldEntries :: FilePath -> (Epoch -> Entry -> a -> a) -> a -> IO a
+foldEntries p f a = do
+  let lp = logp p
+  Log epoch es <- decodeFile lp
+  return $ foldl' (flip (f epoch)) a es

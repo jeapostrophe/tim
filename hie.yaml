@@ -2,7 +2,7 @@ cradle:
     stack:
       - path: "./src"
         component: "tim:lib"
-      - path: "./convert"
-        component: "tim:exe:convert"
-      - path: "./app"
+      - path: "./org2tim"
+        component: "tim:exe:org2tim"
+      - path: "./tim"
         component: "tim:exe:tim"
