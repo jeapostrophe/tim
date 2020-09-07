@@ -6,7 +6,7 @@
         {
             "label": "test",
             "type": "shell",
-            "command": "stack build --fast && stack exec -- convert /Users/jay/Dev/scm/github.jeapostrophe/home/etc/time.org x",
+            "command": "stack build --fast && stack exec -- org2tim /Users/jay/Dev/scm/github.jeapostrophe/home/etc/time.org x",
             "problemMatcher": [],
             "group": {
                 "kind": "build",

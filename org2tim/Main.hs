@@ -7,7 +7,6 @@ import qualified Data.Map.Strict as M
 import Data.OrgMode
 import qualified Data.Set as S
 import Data.Time.Clock
-import Data.Time.Clock.POSIX
 import Data.Time.Format
 import Data.Time.LocalTime
 import System.Environment
@@ -49,11 +48,11 @@ type App = ReaderT Env IO
 
 type Path = [String]
 
-data ClockEntry = ClockEntry Path UTCTime UTCTime
+data ClockEntry = ClockEntry LineNumber Path UTCTime UTCTime
   deriving (Eq)
 
 instance Ord ClockEntry where
-  (ClockEntry _ x _) <= (ClockEntry _ y _) = x <= y
+  (ClockEntry _ _ x _) <= (ClockEntry _ _ y _) = x <= y
 
 data Env = Env
   { ePath :: Path,
@@ -73,21 +72,21 @@ mkEnv0 = do
   eEpochR <- newIORef $ zonedTimeToUTC zt
   return $ Env {..}
 
-add :: LocalClockEntry -> App ()
-add (lfrom, lto) = do
+add :: LineNumber -> LocalClockEntry -> App ()
+add ln (lfrom, lto) = do
   Env {..} <- ask
   let f = localTimeToUTC eTimeZone
   let from = f lfrom
   let to = f lto
   liftIO $ modifyIORef ePathsR (S.insert ePath)
   liftIO $ modifyIORef eEpochR (min from)
-  liftIO $ modifyIORef eEntriesR ((ClockEntry ePath from to) :)
+  liftIO $ modifyIORef eEntriesR ((ClockEntry ln ePath from to) :)
   return ()
 
 lgo :: TextLine -> App ()
 lgo (TextLine _ l ln) =
   case parseClockEntry l of
-    Just lce -> add lce
+    Just lce -> add ln lce
     Nothing -> liftIO $ putStrLn $ "Skipped: " <> ln' <> l
   where
     ln' = maybe "" ((++ ": ") . show) ln
@@ -108,16 +107,10 @@ ngo n = do
   local (\e -> e {ePath = path'}) $ do
     mapM_ cgo $ nChildren n
 
-fmtDuration :: Integral a => UTCTime -> UTCTime -> a
-fmtDuration from to =
-  round $ diffUTCTime to from
-
 makeEntry :: UTCTime -> M.Map Path Topic -> ClockEntry -> Entry
-makeEntry epoch p2idx (ClockEntry p from to) = Entry start duration tag
-  where
-    start :: Start = fmtDuration epoch from
-    duration :: Duration = fmtDuration from to
-    tag :: Topic = p2idx M.! p
+makeEntry epoch p2idx (ClockEntry ln p from to) = 
+  mkEntry ln' epoch from to $ p2idx M.! p
+  where ln' = maybe "" ((" at line " ++) . show) ln
 
 main :: IO ()
 main = do
@@ -133,4 +126,4 @@ main = do
   let pathsToIntM :: M.Map Path Topic = M.fromList $ zip ePathsL [0 ..]
   eEntries <- readIORef eEntriesR
   eEpoch <- readIORef eEpochR
-  writeLog dest $ Log (round (utcTimeToPOSIXSeconds eEpoch)) $ map(makeEntry eEpoch pathsToIntM) $ sort eEntries
+  writeLog dest $ Log (mkEpoch eEpoch) $ map (makeEntry eEpoch pathsToIntM) $ sort eEntries

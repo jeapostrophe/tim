@@ -6,16 +6,24 @@ module Tim
     Entry (..),
     writeTopics,
     writeLog,
+    mkEpoch,
+    mkEntry,
   )
 where
 
+import Control.Monad
 import Data.Binary
 import Data.Binary.Get
 import Data.Binary.Put
+---import Data.Bits
 import Data.List
-import Data.Word()
-import System.FilePath
+import Data.Time.Clock
+import Data.Time.Clock.POSIX
+---import Data.Time.Format
+---import Data.Time.LocalTime
+import Data.Word ()
 import System.Directory
+import System.FilePath
 
 type Epoch = Word64
 
@@ -65,17 +73,50 @@ logp p = p </> "log"
 
 exactly :: a -> Int -> [a] -> [a]
 exactly def sz l = l''
-  where l' = take sz l
-        l'' = l' ++ replicate (sz - (length l')) def
+  where
+    l' = take sz l
+    l'' = l' ++ replicate (sz - (length l')) def
+
+prepPath :: FilePath -> IO ()
+prepPath p = do
+  createDirectoryIfMissing True $ takeDirectory p
+  fe <- doesFileExist p
+  when fe $
+    removeFile p
 
 writeTopics :: FilePath -> Topics -> IO ()
 writeTopics p ts = do
-  createDirectoryIfMissing True p
-  writeFile (topicsp p) ts'
-  where
-    ts' = intercalate "\n" $ map (exactly ' ' $ topic_len - 1) ts
+  let p' = topicsp p
+  prepPath p'
+  let ts' = intercalate "\n" $ map (exactly ' ' $ topic_len - 1) ts
+  writeFile p' ts'
 
 writeLog :: FilePath -> Log -> IO ()
 writeLog p l = do
-  createDirectoryIfMissing True p
-  encodeFile (logp p) l
+  let p' = logp p
+  prepPath p'
+  encodeFile p' l
+
+safeRoundM :: forall a b. (RealFrac a, Integral b, Bounded b) => a -> Maybe b
+safeRoundM x =
+  case x < fromIntegral (minBound :: b) || x > fromIntegral (maxBound :: b) of
+    True -> Nothing
+    False -> Just $ round x
+
+safeRound :: forall a b. (Show a, RealFrac a, Integral b, Bounded b) => String -> a -> b
+safeRound lab x =
+  case safeRoundM x of
+    Nothing -> error $ "safeRound: cannot convert " <> show x <> " to " <> lab
+    Just y -> y
+
+mkEpoch :: UTCTime -> Epoch
+mkEpoch t =
+  safeRound "epoch" (utcTimeToPOSIXSeconds t)
+
+safeDuration :: (Integral a, Bounded a) => String -> UTCTime -> UTCTime -> a
+safeDuration lab from to =
+  safeRound lab $ diffUTCTime to from
+
+mkEntry :: String -> UTCTime -> UTCTime -> UTCTime -> Topic -> Entry
+mkEntry lab epoch start end topic =
+  Entry (safeDuration ("start" <> lab) epoch start) (safeDuration ("duration" <> lab) start end) topic

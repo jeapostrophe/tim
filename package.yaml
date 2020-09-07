@@ -61,7 +61,7 @@ library:
 executables:
   tim:
     main:                Main.hs
-    source-dirs:         app
+    source-dirs:         tim
     ghc-options:
     - -threaded
     - -rtsopts
@@ -69,9 +69,9 @@ executables:
     dependencies:
     - tim
 
-  convert:
+  org2tim:
     main:                Main.hs
-    source-dirs:        convert
+    source-dirs:        org2tim
     ghc-options:
     - -threaded
     - -rtsopts
