@@ -25,6 +25,9 @@ type Duration = Word16
 
 type Topic = Word16
 
+topic_len :: Int
+topic_len = 128
+
 type Topics = [String]
 
 data Log = Log Epoch [Entry]
@@ -68,7 +71,9 @@ exactly def sz l = l''
 writeTopics :: FilePath -> Topics -> IO ()
 writeTopics p ts = do
   createDirectoryIfMissing True p
-  writeFile (topicsp p) $ intercalate "\n" ts
+  writeFile (topicsp p) ts'
+  where
+    ts' = intercalate "\n" $ map (exactly ' ' $ topic_len - 1) ts
 
 writeLog :: FilePath -> Log -> IO ()
 writeLog p l = do
