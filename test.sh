@@ -2,26 +2,35 @@
 set -e -x
 
 stack build --fast
+PATH="$(dirname $(stack exec -- which org2tim)):$PATH"
+
+(tim || [ $? -eq 1 ])
 
 rm -fr .tim
-stack exec -- org2tim /Users/jay/Dev/scm/github.jeapostrophe/home/etc/time.org
+org2tim /Users/jay/Dev/scm/github.jeapostrophe/home/etc/time.org
 du -hac .tim
 
-stack exec -- tim help
+tim help
 
-(stack exec -- tim zelp || [ $? -eq 1 ])
+(tim zelp || [ $? -eq 1 ])
 
-stack exec -- tim sum
+tim sum
 
-stack exec -- tim sum :Games
-stack exec -- tim sum :Work:UML-301:2017 Spring
+tim sum Games
+tim sum Work:UML-301:2017 Spring
 
-(stack exec -- tim start Test || [ $? -eq 1 ])
-stack exec -- tim new Test
-stack exec -- tim start Test
+tim sum Test
+(tim start Test || [ $? -eq 1 ])
+(tim || [ $? -eq 1 ])
 
-stack exec -- tim
+tim new Test
+tim sum Test
+tim start Test
+
+tim
 sleep 1
-stack exec -- tim
+tim
 
-stack exec -- tim stop
+tim stop
+tim sum Test
+tim

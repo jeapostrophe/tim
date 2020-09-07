@@ -124,7 +124,9 @@ main = do
   let Env {..} = env0
   ePaths <- readIORef ePathsR
   let ePathsL = S.toAscList ePaths
-  writeTopics timDir $ map (intercalate ":") ePathsL
+  let fp [] = ""
+      fp (p:ps) = p <> intercalate ":" ps
+  writeTopics timDir $ map fp ePathsL
   let pathsToIntM :: M.Map Path Topic = M.fromList $ zip ePathsL [0 ..]
   eEntries <- readIORef eEntriesR
   eEpoch <- readIORef eEpochR

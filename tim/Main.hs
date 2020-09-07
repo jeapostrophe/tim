@@ -1,17 +1,17 @@
 module Main (main) where
 
 import Control.Monad.Reader
----import Data.Time.Clock
----import Data.Time.Format
----import Data.Time.LocalTime
+import qualified Data.ByteString.Char8 as BC
 import Data.List
 import qualified Data.Map.Strict as M
+import Data.Time.Clock
+import Data.Time.Format
+import Data.Time.LocalTime
 import System.Directory
 import System.Environment
 import System.Exit
 import System.FilePath
 import Tim
-import qualified Data.ByteString.Char8 as BC
 
 type App = ReaderT Env IO
 
@@ -26,7 +26,7 @@ findInParent target cwd = do
     True -> Just <$> makeAbsolute target'
     False ->
       let cwd' = takeDirectory cwd
-       in case cwd' == "" of
+       in case cwd' == "/" of
             False -> findInParent target cwd'
             True -> return Nothing
 
@@ -34,42 +34,99 @@ mkEnv0 :: IO Env
 mkEnv0 = do
   cwd <- getCurrentDirectory
   cwd' <- makeAbsolute cwd
-  Just ePath <- findInParent timDir cwd'
-  return $ Env {..}
+  mp <- findInParent timDir cwd'
+  case mp of
+   Nothing -> sfail $ "No " <> timDir <> " in parents"
+   Just ePath -> return $ Env {..}
 
 tshow :: Integer -> String
-tshow x = f xh "h" <> f xm "m" <> f xs "s"
- where (xh, x') = quotRem x (60*60)
-       (xm, xs) = quotRem x' 60
-       f amt suffix = if amt == 0 then "" else (show amt) <> suffix <> " "
+tshow x = f xh "h" <> f xm "m" <> (show xs) <> "s"
+  where
+    (xh, x') = quotRem x (60 * 60)
+    (xm, xs) = quotRem x' 60
+    f amt suffix = if amt == 0 then "" else (show amt) <> suffix <> " "
 
-tActive :: App ()
-tActive = error "XXX active"
+getTopics' :: FilePath -> String -> IO (M.Map Topic String)
+getTopics' ep tr = do
+  let trb = BC.pack tr
+  let trl = BC.length trb
+  let sel x = trb == BC.take trl x
+  getTopics ep sel
 
 tSum :: String -> App ()
 tSum tr = do
   Env {..} <- ask
   liftIO $ do
-    let trb = BC.pack tr
-    let trl = BC.length trb
-    let sel x = trb == BC.take trl x
-    tm <- getTopics ePath sel
+    tm <- getTopics' ePath tr
     let f _ (Entry _ d t) (s, m) = (s', M.adjust (+ d') t m)
-            where d' :: Integer = fromIntegral d
-                  s' = if M.member t m then (s + d') else s
+          where
+            d' :: Integer = fromIntegral d
+            s' = if M.member t m then (s + d') else s
     (s, m) <- foldEntries ePath f $ (0, M.map (const (0 :: Integer)) tm)
     let g t ts = putStrLn $ (tm M.! t) <> "\n> " <> tshow ts
     mapM_ (uncurry g) $ M.toList m
     putStrLn $ "Total\n> " <> tshow s
 
+sfail :: String -> IO a
+sfail s = do
+  putStrLn s
+  void $ exitWith $ ExitFailure 1
+  error "Impossible"
+
 tNew :: String -> App ()
-tNew _t = error "XXX new"
+tNew t = do
+  Env {..} <- ask
+  liftIO $ do
+    tm <- getTopics ePath (BC.pack t ==)
+    case M.null tm of
+      True -> addTopic ePath t
+      False -> sfail $ "Topic exists: '" <> t <> "'"
 
 tStart :: String -> App ()
-tStart _t = error "XXX start"
+tStart tr = do
+  Env {..} <- ask
+  liftIO $ do
+    tm <- getTopics' ePath tr
+    case M.toList tm of
+      [(t, _)] -> do
+        epoch <- getEpoch ePath
+        now <- getCurrentTime
+        case safeDuration epoch now of
+          Nothing -> sfail $ "Could not safely turn to duration"
+          Just start -> do
+            ok <- startEntry ePath start t
+            case ok of
+              True -> return ()
+              False -> sfail $ "Timer running"
+      _ -> sfail $ "No unique topic matching: '" <> tr <> "'"
+
+tActiveStop :: Bool -> App ()
+tActiveStop isStop = do
+  Env {..} <- ask
+  liftIO $ do
+    epoch <- getEpoch ePath
+    ae <- activeEntry ePath
+    case ae of
+      Nothing -> exitWith $ ExitFailure 1
+      Just (Entry start _ t) -> do
+        let start' = addUTCTime (fromIntegral start) epoch
+        now <- getCurrentTime
+        let dur :: Integer = round $ diffUTCTime now start'
+        topics <- getTopic ePath t
+        tz <- getCurrentTimeZone
+        let start'' = utcToLocalTime tz start'
+        let s = formatTime defaultTimeLocale "%c" start''
+        putStrLn $ topics <> " for " <> tshow dur <> " since " <> s
+        when isStop $
+          case safeDuration start' now of
+              Just dur' -> stopActiveEntry ePath dur'
+              Nothing -> sfail "Duration too long" --- XXX split and log
+
+tActive :: App ()
+tActive = tActiveStop False
 
 tStop :: App ()
-tStop = error "XXX stop"
+tStop = tActiveStop True
 
 usage :: ExitCode -> IO ()
 usage ec = do

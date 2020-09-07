@@ -4,13 +4,20 @@ module Tim
     Topic,
     Log (..),
     Entry (..),
+    safeDuration,
     writeTopics,
     writeLog,
     mkEpoch,
     mkEntry,
     timDir,
+    getTopic,
     getTopics,
     foldEntries,
+    addTopic,
+    getEpoch,
+    startEntry,
+    activeEntry,
+    stopActiveEntry,
   )
 where
 
@@ -18,16 +25,17 @@ import Control.Monad
 import Data.Binary
 import Data.Binary.Get
 import Data.Binary.Put
+import qualified Data.ByteString.Char8 as BC
+import qualified Data.ByteString.Lazy as B
+import Data.Char
 import Data.List
+import qualified Data.Map.Strict as M
 import Data.Time.Clock
 import Data.Time.Clock.POSIX
 import Data.Word ()
 import System.Directory
 import System.FilePath
-import qualified Data.Map.Strict as M
---import qualified Data.ByteString as B
-import qualified Data.ByteString.Char8 as BC
-import Data.Char
+import System.IO
 
 timDir :: FilePath
 timDir = ".tim"
@@ -43,6 +51,9 @@ type Topic = Word16
 topic_len :: Int
 topic_len = 128
 
+topicify :: String -> String
+topicify s = (exactly ' ' $ topic_len - 1) s ++ "\n"
+
 type Topics = [String]
 
 data Log = Log Epoch [Entry]
@@ -52,6 +63,7 @@ instance Binary Log where
   get = Log <$> getWord64le <*> getList get
 
 data Entry = Entry Start Duration Topic
+  deriving (Show)
 
 instance Binary Entry where
   put (Entry s d t) = putWord32le s <> putWord16le d <> putWord16le t
@@ -95,8 +107,7 @@ writeTopics :: FilePath -> Topics -> IO ()
 writeTopics p ts = do
   let p' = topicsp p
   prepPath p'
-  let ts' = intercalate "\n" $ map (exactly ' ' $ topic_len - 1) ts
-  writeFile p' ts'
+  writeFile p' $ concatMap topicify ts
 
 writeLog :: FilePath -> Log -> IO ()
 writeLog p l = do
@@ -124,12 +135,22 @@ mkEntry epoch start end topic = do
   dur <- safeDuration start end
   return $ Entry start' dur topic
 
+getEpoch :: FilePath -> IO UTCTime
+getEpoch p =
+  withFile (logp p) ReadMode $
+    ( \lh -> do
+        epochBs <- B.hGet lh 8
+        let epoch = runGet getWord64le epochBs
+        return $ posixSecondsToUTCTime $ fromIntegral epoch
+    )
+
 splitEvery :: Int -> BC.ByteString -> [BC.ByteString]
-splitEvery len bs = 
+splitEvery len bs =
   case BC.null bs of
     True -> []
     False -> b : splitEvery len bs'
-      where (b, bs') = BC.splitAt len bs 
+      where
+        (b, bs') = BC.splitAt len bs
 
 trimTopic :: BC.ByteString -> BC.ByteString
 --- XXX I want to use dropWhileEnd isSpace
@@ -141,10 +162,61 @@ getTopics p sel = do
   bs <- BC.readFile tp
   let tbs = map trimTopic $ splitEvery topic_len bs
   let f m (tb, idx) = if sel tb then M.insert idx (BC.unpack tb) m else m
-  return $ foldl' f mempty $ zip tbs [0..]
+  return $ foldl' f mempty $ zip tbs [0 ..]
+
+addTopic :: FilePath -> String -> IO ()
+addTopic p t = do
+  let tp = topicsp p
+  h <- openFile tp AppendMode
+  hPutStr h $ topicify t
+  hClose h
+
+getTopic :: FilePath -> Topic -> IO String
+getTopic p t = do
+  withFile (topicsp p) ReadMode $
+   ( \th -> do 
+     hSeek th AbsoluteSeek (fromIntegral $ (fromIntegral t) * topic_len)
+     tbs <- BC.hGet th topic_len
+     return $ BC.unpack $ trimTopic tbs )
 
 foldEntries :: FilePath -> (Epoch -> Entry -> a -> a) -> a -> IO a
 foldEntries p f a = do
   let lp = logp p
   Log epoch es <- decodeFile lp
   return $ foldl' (flip (f epoch)) a es
+
+startEntry :: FilePath -> Start -> Topic -> IO Bool
+startEntry p now t = do
+  ae <- activeEntry p
+  case ae of
+    Just _ -> return False
+    Nothing ->
+      withFile (logp p) AppendMode $
+        ( \lh -> do
+            B.hPut lh $ encode (Entry now 0 t)
+            return True)
+
+readActiveEntry :: Handle -> IO Entry
+readActiveEntry lh = do
+  sz <- hFileSize lh
+  hSeek lh AbsoluteSeek (sz - 8)
+  entryBs <- B.hGet lh 8
+  return $ decode entryBs
+
+activeEntry :: FilePath -> IO (Maybe Entry)
+activeEntry p =
+  withFile (logp p) ReadMode $
+    ( \lh -> do
+        entry@(Entry _ dur _) <- readActiveEntry lh
+        case dur == 0 of
+          False -> return $ Nothing
+          True -> return $ Just entry)
+
+stopActiveEntry :: FilePath -> Duration -> IO ()
+stopActiveEntry p dur = do
+  withFile (logp p) ReadWriteMode $
+   (\lh -> do
+        Entry start _ t <- readActiveEntry lh
+        sz <- hFileSize lh
+        hSeek lh AbsoluteSeek (sz - 8)
+        B.hPut lh $ encode (Entry start dur t))
