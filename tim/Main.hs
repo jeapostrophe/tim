@@ -107,7 +107,7 @@ tActiveStop isStop = do
     epoch <- getEpoch ePath
     ae <- activeEntry ePath
     case ae of
-      Nothing -> exitWith $ ExitFailure 1
+      Nothing -> sfail "No active timer"
       Just (Entry start _ t) -> do
         let start' = addUTCTime (fromIntegral start) epoch
         now <- getCurrentTime
@@ -128,6 +128,22 @@ tActive = tActiveStop False
 tStop :: App ()
 tStop = tActiveStop True
 
+tExport :: App ()
+tExport = do
+  Env {..} <- ask
+  liftIO $ do
+    tz <- getCurrentTimeZone
+    epoch <- getEpoch ePath
+    tm <- getTopics' ePath ""
+    let f _ (Entry start dur t) before = before >> after
+          where
+            start' = addUTCTime (fromIntegral start) epoch
+            end' = addUTCTime (fromIntegral dur) start'
+            fmt = formatTime defaultTimeLocale "%FT%T" . utcToLocalTime tz
+            after = 
+              putStrLn $ "timew track :adjust " <> (fmt start') <> " - " <> (fmt end') <> " '" <> (tm M.! t) <> "'"
+    join $ foldEntries ePath f (return ())
+    
 usage :: ExitCode -> IO ()
 usage ec = do
   putStrLn $ "tim"
@@ -136,6 +152,7 @@ usage ec = do
   putStrLn $ "   new - new topic"
   putStrLn $ " start - start timer"
   putStrLn $ "  stop - stop timer"
+  putStrLn $ "export - export data"
   putStrLn $ "  help - show this message"
   exitWith ec
 
@@ -151,5 +168,6 @@ main = do
       ("new" : ts) -> tNew $ c ts
       ("start" : ts) -> tStart $ c ts
       ["stop"] -> tStop
+      ["export"] -> tExport
       ["help"] -> liftIO $ usage ExitSuccess
       _ -> liftIO $ usage $ ExitFailure 1
